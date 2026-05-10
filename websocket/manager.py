@@ -9,6 +9,7 @@ Implements:
 Requirements: 3.2, 3.10, 3.11, 6.3
 """
 
+import asyncio
 import logging
 
 from fastapi import WebSocket
@@ -16,6 +17,11 @@ from fastapi import WebSocket
 from models.session import DiningGroup
 
 logger = logging.getLogger(__name__)
+
+# Grace period before destroying an empty session (seconds).
+# This prevents the session from being wiped when the last participant
+# briefly disconnects during a page navigation or network hiccup.
+_SESSION_DESTROY_GRACE_SECONDS = 30
 
 
 class ConnectionManager:
@@ -27,12 +33,14 @@ class ConnectionManager:
         dashboard_rooms: Maps restaurant_id → set of active WebSocket connections
                          for that restaurant's dashboard.
         sessions:        Maps session_id → DiningGroup for every active session.
+        _destroy_tasks:  Maps session_id → asyncio.Task for pending destroy timers.
     """
 
     def __init__(self) -> None:
         self.session_rooms: dict[str, set[WebSocket]] = {}
         self.dashboard_rooms: dict[str, set[WebSocket]] = {}
         self.sessions: dict[str, DiningGroup] = {}
+        self._destroy_tasks: dict[str, asyncio.Task] = {}
 
     # ------------------------------------------------------------------
     # Session room methods
@@ -41,14 +49,17 @@ class ConnectionManager:
     async def connect_session(self, ws: WebSocket, session_id: str) -> None:
         """Accept a WebSocket and add it to the session room.
 
-        Also registers the connection on the DiningGroup object if the session
-        already exists in memory (Requirement 3.2).
+        Also cancels any pending destroy timer for this session (a participant
+        reconnected before the grace period expired).
         """
         await ws.accept()
 
         if session_id not in self.session_rooms:
             self.session_rooms[session_id] = set()
         self.session_rooms[session_id].add(ws)
+
+        # Cancel any pending destroy timer — someone reconnected in time.
+        self._cancel_destroy_timer(session_id)
 
         # Keep DiningGroup.connections in sync so handlers can iterate it.
         if session_id in self.sessions:
@@ -57,8 +68,8 @@ class ConnectionManager:
     async def disconnect_session(self, ws: WebSocket, session_id: str) -> None:
         """Remove a WebSocket from the session room.
 
-        If the room becomes empty after removal, the DiningGroup is destroyed
-        (Requirement 3.10, 3.11).
+        If the room becomes empty, schedules a delayed destroy instead of
+        destroying immediately, giving reconnecting clients a grace period.
         """
         room = self.session_rooms.get(session_id)
         if room:
@@ -67,10 +78,40 @@ class ConnectionManager:
         if session_id in self.sessions:
             self.sessions[session_id].connections.discard(ws)
 
-        # Garbage-collect the session when the last connection leaves.
-        if not room:
+        # Schedule delayed destruction when the room is empty.
+        if not room or len(room) == 0:
+            self._schedule_destroy(session_id)
+
+    def _schedule_destroy(self, session_id: str) -> None:
+        """Schedule session destruction after the grace period."""
+        self._cancel_destroy_timer(session_id)
+
+        async def _delayed_destroy() -> None:
+            await asyncio.sleep(_SESSION_DESTROY_GRACE_SECONDS)
+            room = self.session_rooms.get(session_id)
+            if not room or len(room) == 0:
+                logger.info(
+                    "ConnectionManager: destroying empty session %s after grace period.",
+                    session_id,
+                )
+                self.sessions.pop(session_id, None)
+                self.session_rooms.pop(session_id, None)
+            self._destroy_tasks.pop(session_id, None)
+
+        try:
+            loop = asyncio.get_event_loop()
+            task = loop.create_task(_delayed_destroy())
+            self._destroy_tasks[session_id] = task
+        except RuntimeError:
+            # No running event loop (e.g. during tests) — destroy immediately.
             self.sessions.pop(session_id, None)
             self.session_rooms.pop(session_id, None)
+
+    def _cancel_destroy_timer(self, session_id: str) -> None:
+        """Cancel a pending destroy timer if one exists."""
+        task = self._destroy_tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
 
     async def broadcast_session(self, session_id: str, message: dict) -> None:
         """Send a JSON message to every WebSocket in the session room.
@@ -100,10 +141,9 @@ class ConnectionManager:
             if session_id in self.sessions:
                 self.sessions[session_id].connections.discard(ws)
 
-        # If the room is now empty, destroy the session.
-        if not room:
-            self.sessions.pop(session_id, None)
-            self.session_rooms.pop(session_id, None)
+        # If the room is now empty, schedule delayed destruction.
+        if not room or len(room) == 0:
+            self._schedule_destroy(session_id)
 
     # ------------------------------------------------------------------
     # Dashboard room methods

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -106,12 +107,33 @@ async def ws_session(ws: WebSocket, session_id: str):
     group = manager.sessions[session_id]
     await manager.broadcast_session(session_id, _build_sync_payload(group))
 
+    # Keepalive ping task — sends a ping every 30 s to prevent proxy/Render
+    # from closing idle WebSocket connections.
+    async def _keepalive() -> None:
+        try:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await ws.send_json({"type": "ping"})
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    ping_task = asyncio.create_task(_keepalive())
+
     try:
         while True:
             raw = await ws.receive_text()
+            # Ignore pong responses from the client
+            if raw.strip() in ('{"type":"pong"}', "pong"):
+                continue
             message = WsMessage.model_validate_json(raw)
             await dispatch(message, session_id, ws, manager)
     except WebSocketDisconnect:
+        pass
+    finally:
+        ping_task.cancel()
         await manager.disconnect_session(ws, session_id)
         # If the session still has active connections, broadcast updated sync.
         if session_id in manager.sessions:
