@@ -33,14 +33,15 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 # In production, FRONTEND_URL should be set to your Vercel URL, e.g.:
-#   https://dineflow.vercel.app
+#   https://dineflow-frontend-brown.vercel.app
 # Multiple origins can be comma-separated: "https://a.vercel.app,https://b.vercel.app"
 _frontend_url = os.getenv("FRONTEND_URL", "")
 _extra_origins = [o.strip() for o in _frontend_url.split(",") if o.strip()]
 
 ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Next.js dev server
-    *_extra_origins,
+    "http://localhost:3000",        # Next.js dev server
+    "https://dineflow-frontend-brown.vercel.app",  # production frontend
+    *_extra_origins,                # any additional origins from env var
 ]
 
 app.add_middleware(
