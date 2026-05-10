@@ -7,6 +7,7 @@ Routes:
 
 import os
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 
@@ -18,7 +19,6 @@ from websocket.manager import manager
 router = APIRouter()
 
 # Base URL used when building invite links.
-# Reads from FRONTEND_URL env var so it works in both local and production.
 _FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 
@@ -26,28 +26,34 @@ _FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("
 async def create_session(body: CreateSessionRequest) -> CreateSessionResponse:
     """Create a new Dining Group session.
 
-    Validates that the requested restaurant exists, generates a unique
-    session ID, stores an in-memory DiningGroup, and returns the session
-    ID together with a shareable invite link.
+    Persists the session to the database so it survives server restarts,
+    then registers it in the in-memory ConnectionManager.
 
     Raises:
-        HTTPException: 404 if the restaurant does not exist in the database.
+        HTTPException: 404 if the restaurant does not exist.
     """
-    # Validate that the restaurant exists
     async with get_db() as db:
+        # Validate restaurant exists
         cursor = await db.execute(
             "SELECT id FROM restaurants WHERE id = ?", (body.restaurant_id,)
         )
         restaurant = await cursor.fetchone()
 
-    if restaurant is None:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        if restaurant is None:
+            raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    # Generate a new session ID and build the invite link
-    session_id = str(uuid.uuid4())
-    invite_link = f"{_FRONTEND_BASE_URL}/session/{session_id}"
+        session_id = str(uuid.uuid4())
+        invite_link = f"{_FRONTEND_BASE_URL}/session/{session_id}"
+        created_at = datetime.utcnow().isoformat()
 
-    # Create the DiningGroup and register it in the ConnectionManager
+        # Persist to DB so the session survives server restarts
+        await db.execute(
+            "INSERT INTO sessions (id, restaurant_id, invite_link, created_at) VALUES (?, ?, ?, ?)",
+            (session_id, body.restaurant_id, invite_link, created_at),
+        )
+        await db.commit()
+
+    # Register in-memory DiningGroup
     dining_group = DiningGroup(
         session_id=session_id,
         restaurant_id=body.restaurant_id,

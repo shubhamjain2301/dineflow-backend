@@ -97,17 +97,38 @@ async def ws_session(ws: WebSocket, session_id: str):
     """Dining Group session room — Requirements: 3.1, 3.2, 3.10, 3.11, 9.3"""
     await manager.connect_session(ws, session_id)
 
-    # Reject connections for sessions that don't exist in memory.
+    # If the session isn't in memory (e.g. after a server restart),
+    # try to restore it from the database.
     if session_id not in manager.sessions:
-        await ws.close(code=4004)
-        return
+        from models.db import get_db
+        async with get_db() as db:
+            cursor = await db.execute(
+                "SELECT id, restaurant_id, invite_link FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = await cursor.fetchone()
+
+        if row is None:
+            # Session truly doesn't exist — reject with 4004
+            await ws.close(code=4004)
+            return
+
+        # Restore the DiningGroup in memory from DB record
+        from models.session import DiningGroup
+        manager.sessions[session_id] = DiningGroup(
+            session_id=row["id"],
+            restaurant_id=row["restaurant_id"],
+            invite_link=row["invite_link"],
+            participants={},
+            cart={},
+        )
 
     # Send an initial sync to the newly connected client.
     from websocket.handlers import _build_sync_payload
     group = manager.sessions[session_id]
     await manager.broadcast_session(session_id, _build_sync_payload(group))
 
-    # Keepalive ping task — sends a ping every 30 s to prevent proxy/Render
+    # Keepalive ping task — sends a ping every 30s to prevent proxy/Render
     # from closing idle WebSocket connections.
     async def _keepalive() -> None:
         try:

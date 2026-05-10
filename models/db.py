@@ -89,13 +89,23 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 """
 
+_CREATE_SESSIONS = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id            TEXT PRIMARY KEY,
+    restaurant_id TEXT NOT NULL REFERENCES restaurants(id),
+    invite_link   TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+"""
+
 
 async def init_db() -> None:
-    """Create all four tables if they do not already exist."""
+    """Create all tables if they do not already exist."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute(_CREATE_RESTAURANTS)
         await db.execute(_CREATE_MENU_ITEMS)
         await db.execute(_CREATE_GROUP_ORDERS)
         await db.execute(_CREATE_ORDER_ITEMS)
+        await db.execute(_CREATE_SESSIONS)
         await db.commit()
