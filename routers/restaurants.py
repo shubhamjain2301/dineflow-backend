@@ -3,6 +3,7 @@ Restaurant and menu endpoints.
 
 Routes:
     GET /restaurants          — list all restaurants
+    GET /restaurants/{id}     — get a single restaurant by ID (404 if not found)
     GET /restaurants/{id}/menu — list menu items for a restaurant (404 if not found)
 """
 
@@ -33,6 +34,32 @@ async def list_restaurants() -> list[RestaurantResponse]:
         )
         for row in rows
     ]
+
+
+@router.get("/restaurants/{restaurant_id}", response_model=RestaurantResponse)
+async def get_restaurant(restaurant_id: str) -> RestaurantResponse:
+    """Return a single restaurant by ID.
+
+    Raises:
+        HTTPException: 404 if the restaurant does not exist.
+    """
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id, name, description, cuisine, prep_time FROM restaurants WHERE id = ?",
+            (restaurant_id,),
+        )
+        row = await cursor.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    return RestaurantResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"],
+        cuisine=row["cuisine"],
+        prep_time=row["prep_time"],
+    )
 
 
 @router.get("/restaurants/{restaurant_id}/menu", response_model=list[MenuItemResponse])
