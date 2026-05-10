@@ -13,8 +13,12 @@ import aiosqlite
 # ---------------------------------------------------------------------------
 
 # Resolve the path relative to this file so it always lands in backend/
+# models/db.py lives at backend/models/db.py
+# dirname(__file__)      → backend/models/
+# dirname(dirname(...))  → backend/
+# On Render the repo root IS backend/, so this resolves correctly.
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(_BACKEND_DIR, "dineflow.db")
+DB_PATH = os.environ.get("DB_PATH") or os.path.join(_BACKEND_DIR, "dineflow.db")
 
 
 # ---------------------------------------------------------------------------

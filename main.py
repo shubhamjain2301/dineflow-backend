@@ -73,7 +73,13 @@ app.include_router(orders_router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    from models.db import DB_PATH
+    import os
+    return {
+        "status": "ok",
+        "db_path": DB_PATH,
+        "db_exists": os.path.exists(DB_PATH),
+    }
 
 
 # ---------------------------------------------------------------------------

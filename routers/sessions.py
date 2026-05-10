@@ -5,6 +5,7 @@ Routes:
     POST /sessions — create a new Dining Group session for a given restaurant
 """
 
+import os
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -17,8 +18,8 @@ from websocket.manager import manager
 router = APIRouter()
 
 # Base URL used when building invite links.
-# In production this would come from an environment variable.
-_FRONTEND_BASE_URL = "http://localhost:3000"
+# Reads from FRONTEND_URL env var so it works in both local and production.
+_FRONTEND_BASE_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=201)
