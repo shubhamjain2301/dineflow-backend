@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Database — never commit the SQLite file
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment / Secrets
+.env
+.env.local
+.env.*.local
+# Keep .example files — safe to commit
+!*.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
